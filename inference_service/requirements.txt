@@ -1,0 +1,6 @@
+gunicorn
+flask
+flask-cors
+h5py==2.10.0
+superwise==6.0.10
+boto3==1.21.21
