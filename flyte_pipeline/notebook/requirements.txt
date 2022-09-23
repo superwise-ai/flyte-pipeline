@@ -116,7 +116,7 @@ pkgutil-resolve-name==1.3.10
 prometheus-client==0.14.1
 prometheus-flask-exporter==0.20.3
 prompt-toolkit==3.0.30
-protobuf==3.20.1
+protobuf==3.20.2
 protoc-gen-swagger==0.1.0
 psutil==5.9.1
 ptyprocess==0.7.0
