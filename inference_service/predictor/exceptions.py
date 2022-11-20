@@ -1,0 +1,2 @@
+class EmptyServingModelException(Exception):
+    pass
