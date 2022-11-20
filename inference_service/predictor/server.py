@@ -1,17 +1,17 @@
 import logging
-import os
 
 from flask import Flask, jsonify, request
-from flytekit.remote import FlyteRemote
 from flytekit.configuration import Config
+from flytekit.remote import FlyteRemote
 
-from predictor.predictor import DiamondPricePredictor
+from app.predictor import DiamondPricePredictor
+from app.exceptions import EmptyServingModelException
 
 app = Flask("DiamondPricePredictor")
 gunicorn_logger = logging.getLogger("gunicorn.debug")
 app.logger.handlers = gunicorn_logger.handlers
 app.logger.setLevel(gunicorn_logger.level)
-diamonds_predictor = DiamondPricePredictor(os.environ["MODEL_PATH"])
+diamonds_predictor = DiamondPricePredictor()
 
 
 @app.route("/diamonds/v1/predict", methods=["POST"])
@@ -30,13 +30,17 @@ def predict():
             ]
         }
     """
-    predictions = diamonds_predictor.predict(request.json["instances"])
-    return jsonify(
-        {
-            "predictions": predictions["predicted_prices"],
-            "transaction_id": predictions["transaction_id"],
-        }
-    )
+    try:
+        predictions = diamonds_predictor.predict(request.json)
+    except EmptyServingModelException as e:
+        return str(e), 404
+    else:
+        return jsonify(
+            {
+                "predictions": predictions["predicted_prices"],
+                "transaction_id": predictions["transaction_id"],
+            }
+        )
 
 
 @app.route("/diamonds/v1/update-model", methods=["POST"])
@@ -44,7 +48,7 @@ def update_model():
     """
     Update the model
     """
-    diamonds_predictor.set_model(request.json["model_uri"],request.json["model_id"],request.json["version_id"])
+    diamonds_predictor.update_model(request.json["model_uri"], request.json["model_id"], request.json["version_id"])
     return jsonify(status_code=200)
     
 
@@ -53,7 +57,7 @@ def trigger_pipeline():
     """
     Trigger training-serving pipeline
     """
-    remote = FlyteRemote(config=Config.for_sandbox(),default_project="flytesnacks",default_domain="development")
+    remote = FlyteRemote(config=Config.for_sandbox(), default_project="flytesnacks", default_domain="development")
     flyte_workflow = remote.fetch_workflow(name="core.basic_pipeline.ml_pipeline")
     execution = remote.execute(flyte_workflow, inputs={}, execution_name="retrain", wait=False)
     return jsonify(status_code=200)
