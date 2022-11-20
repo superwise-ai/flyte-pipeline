@@ -14,14 +14,9 @@ Taken from: https://towardsdatascience.com/deploy-mlflow-with-docker-compose-805
 <b>🚧 DO NOT USE IT IN PRODUCTION 🚧</b>
 
 ***
-# Usage
 
-- override envs.env file with relevant keys
-
-***
-
-# Local Check
+# Local Setup
 
 `
-docker-compose --env-file envs.env -f ./docker-compose.yaml up -d --build
+docker-compose --env-file ../envs.env -f ./docker-compose.yaml up -d --build
 `

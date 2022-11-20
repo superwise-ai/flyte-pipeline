@@ -9,19 +9,13 @@ Basic Flask App that demonstrates how to deploy sklearn model and log prediction
 <b>🚧 DO NOT USE IT IN PRODUCTION 🚧</b>
 
 ***
+
 # Usage
-
-- override resources/envs.env file with relevant keys
-
 - `python3 -m venv venv && pip install -r requirements.txt`
 
-
-***
-
-# Local Check
 - Build image:
   ```
-  gunicorn --bind 0.0.0.0:5050 predictor.server:app --timeout 100 -w 1
+  gunicorn --bind 0.0.0.0:5050 predictor.server:app --timeout 100 -w 1 -e BUCKET_NAME=$BUCKET_NAME -e SUPERWISE_CLIENT_ID=$SUPERWISE_CLIENT_ID -e SUPERWISE_SECRET=$SUPERWISE_SECRET
   ```
 
 - Health check: 
@@ -31,7 +25,7 @@ Basic Flask App that demonstrates how to deploy sklearn model and log prediction
 - Prediction:
   
   `
-  curl -X POST 'localhost:5050/diamonds/v1/predict' -H "Content-Type: application/json" -d '{"instances": [{"carat" : 1.42, "clarity" : "VVS1", "color" : "F", "cut" : "Ideal", "depth" : 60.8, "record_id" : 27671, "table" : 56, "x" : 7.25, "y" : 7.32, "z" : 4.43}]}'
+  curl -X POST 'localhost:5050/diamonds/v1/predict' -H "Content-Type: application/json" -d '[{"carat" : 1.42, "clarity" : "VVS1", "color" : "F", "cut" : "Ideal", "depth" : 60.8, "record_id" : 27671, "table" : 56, "x" : 7.25, "y" : 7.32, "z" : 4.43, "ts": "2022-01-01 00:00:00"}]'
   `
 
 - update model:
