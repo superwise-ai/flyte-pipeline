@@ -1,19 +1,17 @@
-import os
 import inspect
+import os
 import typing
+from datetime import datetime
+from random import randint
+
+import boto3
 import joblib
 import mlflow
-import boto3
-import requests
-import flytekitplugins.pandera
 import pandas as pd
+import requests
 import seaborn as sns
-
-from cmath import log
-from os import pathconf
-from random import randint
-from datetime import datetime
-from flytekit import task, workflow, Resources
+import flytekitplugins.pandera
+from flytekit import task, workflow, Resources, conditional
 from flytekit.types.file import JoblibSerializedFile
 from pandera.typing import DataFrame
 from sklearn.compose import ColumnTransformer
@@ -22,15 +20,14 @@ from sklearn.impute import SimpleImputer
 from sklearn.model_selection import cross_val_score, train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
-from mlflow import log_metric, log_param
 from superwise import Superwise
+from superwise.models.dataset import Dataset
 from superwise.models.model import Model
 from superwise.models.version import Version
 from superwise.resources.superwise_enums import DataEntityRole, DatasetType
-from superwise.models.dataset import Dataset
 
-from core.validations import RawData, TargetSerie, TrainData, PredictionData
 from core.utils.metrics import eval_metrics
+from core.validations import RawData, TargetSerie, TrainData, PredictionData
 
 TIMESTAMP = datetime.now().strftime('%Y%m%d%H%M%S')
 MODEL_NAME = "diamonds_predictor"
@@ -41,6 +38,8 @@ ModelPerformance = typing.NamedTuple("ModelPerformance", performance_metrics=typ
                                      test_dataset_with_prediction=DataFrame[PredictionData])
 DataSplits = typing.NamedTuple("DataSplit", x_train=DataFrame[TrainData], y_train=DataFrame[TargetSerie],
                                x_test=DataFrame[TrainData], y_test=DataFrame[TargetSerie])
+ModelEvaluation = typing.NamedTuple("ModelEvaluation", run_id=str, is_deploy=bool)
+SuperwiseModelMetadata = typing.NamedTuple("SuperwiseModelMetadata", model_id=int, version_id=int)
 mlflow.set_tracking_uri(f"http://{LOCAL_IP}:80")
 experiment = mlflow.set_experiment("webinar-diamonds-training-serving-pipeline")
 
@@ -192,8 +191,7 @@ def evaluate_model(model: JoblibSerializedFile, x_test: DataFrame[TrainData],
 
 @task(requests=Resources(cpu="1", mem="1Gi"))
 def validate_model(model_metrics: typing.Dict, new_model: JoblibSerializedFile,
-                   dataset: DataFrame[RawData]) -> typing.Dict:
-    deploy_dict = {}
+                   dataset: DataFrame[RawData]) -> ModelEvaluation:
     target = "price"
     X, y = dataset.drop(columns=[target]), dataset[target]
     model_candidate = joblib.load(new_model)
@@ -224,26 +222,17 @@ def validate_model(model_metrics: typing.Dict, new_model: JoblibSerializedFile,
             and abs(model_metrics['rmse']) < 1000
     ):
         mlflow.register_model(f"runs:/{run_id}/model", MODEL_NAME)
-        deploy_dict["run_id"] = run_id
-        deploy_dict["to_deploy"] = 1
+        # model is good enough for deployment :)
+        return run_id, True
     else:
-        deploy_dict["to_deploy"] = 0
-
-    return deploy_dict
+        # model doesn't have good performance :(
+        return run_id, False
 
 
 @task
-def register_to_superwise(deploy_dict: dict,
-                          model_name: str,
+def register_to_superwise(model_name: str,
                           test_dataset_with_prediction: DataFrame[PredictionData],
-                          ) -> dict:
-    to_deploy = deploy_dict["to_deploy"]
-    print("Is model ready for deployment?")
-    print(f"*** {to_deploy == 1} ***")
-
-    if not to_deploy:
-        return to_deploy
-
+                          ) -> SuperwiseModelMetadata:
     sw = Superwise()
 
     print("Register the new model to Superwise")
@@ -278,7 +267,7 @@ def register_to_superwise(deploy_dict: dict,
         DataEntityRole.ID.value: "record_id"
     }
 
-    dataset = Dataset(name=f"{new_version_name}_training", files=[train_dataset_path], project_id=SUPERWISE_PROJECT_ID,
+    dataset = Dataset(name=f"{new_version_name}_test", files=[train_dataset_path], project_id=SUPERWISE_PROJECT_ID,
                       type=DatasetType.TRAIN, roles=roles)
     dataset = sw.dataset.create(dataset)
 
@@ -297,21 +286,23 @@ def register_to_superwise(deploy_dict: dict,
     new_version = sw.version.create(diamond_version)
     # activate the new version for monitoring
     sw.version.activate(new_version.id)
-    deploy_dict.update({"model_id": model_id, "version_id": new_version.id})
-    return deploy_dict
+
+    return model_id, new_version.id
 
 
 @task
-def deploy_model(deployment_dict: typing.Dict) -> typing.Dict:
-    if not deployment_dict["to_deploy"]:
-        return
+def interrupt_pipeline() -> SuperwiseModelMetadata:
+    raise Exception('The model is not good enough!')
 
-    model_uri = f"{mlflow.get_run(deployment_dict['run_id']).to_dictionary()['info']['artifact_uri']}/{MODEL_NAME}/model.pkl"
+
+@task
+def deploy_model(run_id: str, model_id: int, version_id: int) -> typing.Dict:
+    model_uri = f"{mlflow.get_run(run_id).to_dictionary()['info']['artifact_uri']}/{MODEL_NAME}/model.pkl"
     print(f"Deploying model from {model_uri}")
     res = requests.post(f"http://{LOCAL_IP}:5050/diamonds/v1/update-model",
                         json={"model_uri": model_uri,
-                              "model_id": deployment_dict["model_id"],
-                              "version_id": deployment_dict["version_id"]})
+                              "model_id": model_id,
+                              "version_id": version_id})
     res.raise_for_status()
     return {"status_code": res.status_code}
 
@@ -322,16 +313,23 @@ def ml_pipeline(diamonds_price_threshold: int = 0):
     validated_data = validate_data(df=raw_data)
     x_train, y_train, x_test, y_test = prepare_data(df=validated_data)
     trained_model = train_model(x_train=x_train, y_train=y_train)
-    performance_metrics, test_dataset_with_prediction = evaluate_model(model=trained_model, x_test=x_test, y_test=y_test)
-    deployment_dict = validate_model(model_metrics=performance_metrics, new_model=trained_model, dataset=validated_data)
+    performance_metrics, test_dataset_with_prediction = evaluate_model(model=trained_model, x_test=x_test,
+                                                                       y_test=y_test)
+    run_id, is_deploy = validate_model(model_metrics=performance_metrics, new_model=trained_model,
+                                       dataset=validated_data)
 
-    superwise_deployment_dict = register_to_superwise(
-        deploy_dict=deployment_dict,
-        model_name="Diamonds Price Predictor 3",
-        test_dataset_with_prediction=test_dataset_with_prediction,
+    model_id, version_id = (
+        conditional('is_deployment')
+        .if_(is_deploy.is_true())
+        .then(register_to_superwise(
+            model_name="Diamonds Price Predictor 3",
+            test_dataset_with_prediction=test_dataset_with_prediction,
+        ))
+        .else_()
+        .then(interrupt_pipeline())
     )
 
-    deploy_model(deployment_dict=superwise_deployment_dict)
+    deploy_model(run_id=run_id, model_id=model_id, version_id=version_id)
 
 
 def main():
