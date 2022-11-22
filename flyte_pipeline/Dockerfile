@@ -13,7 +13,6 @@ COPY core/requirements.txt /root
 RUN ${VENV}/bin/pip install -r /root/requirements.txt
 
 
-ARG MODEL_PATH
 ARG SUPERWISE_CLIENT_ID
 ARG SUPERWISE_SECRET
 

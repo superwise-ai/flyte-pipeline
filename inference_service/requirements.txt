@@ -1,6 +1,7 @@
+flytekit==1.1.0
 gunicorn
 flask
 flask-cors
-h5py==2.10.0
-superwise==6.0.10
+superwise==8.2.5
 boto3==1.21.21
+scikit-learn==1.0.2
