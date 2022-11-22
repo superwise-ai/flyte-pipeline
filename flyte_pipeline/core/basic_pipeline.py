@@ -31,7 +31,7 @@ from core.validations import RawData, TargetSerie, TrainData, PredictionData
 
 TIMESTAMP = datetime.now().strftime('%Y%m%d%H%M%S')
 MODEL_NAME = "diamonds_predictor"
-LOCAL_IP = "172.16.80.54"
+LOCAL_IP = "<LOCAL IP>"
 SUPERWISE_PROJECT_ID = 4
 
 ModelPerformance = typing.NamedTuple("ModelPerformance", performance_metrics=typing.Dict,
@@ -322,7 +322,7 @@ def ml_pipeline(diamonds_price_threshold: int = 0):
         conditional('is_deployment')
         .if_(is_deploy.is_true())
         .then(register_to_superwise(
-            model_name="Diamonds Price Predictor 3",
+            model_name="Diamonds Price Predictor",
             test_dataset_with_prediction=test_dataset_with_prediction,
         ))
         .else_()
